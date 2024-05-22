@@ -3,7 +3,7 @@ use log::{debug, error, info};
 use serde::Deserialize;
 use std::{env, process::exit};
 use tokio::{
-    fs::{File, OpenOptions, remove_file},
+    fs::{remove_file, File, OpenOptions},
     io::{AsyncBufReadExt, AsyncWriteExt},
     time::{sleep, Duration},
 };
@@ -67,7 +67,9 @@ async fn main() {
                 Err(e) => error!("{}", e),
             }
         }
-        remove_file(MESSAGE_ID_LOG).await.expect("Failed to remove message-id.log");
+        remove_file(MESSAGE_ID_LOG)
+            .await
+            .expect("Failed to remove message-id.log");
         info!("Exiting...");
         exit(0);
     });
