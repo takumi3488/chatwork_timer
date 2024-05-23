@@ -3,7 +3,7 @@ use log::{debug, error, info};
 use serde::Deserialize;
 use std::{env, process::exit};
 use tokio::{
-    fs::{File, OpenOptions, remove_file},
+    fs::{remove_file, File, OpenOptions},
     io::{AsyncBufReadExt, AsyncWriteExt},
     time::{sleep, Duration},
 };
@@ -32,18 +32,8 @@ async fn main() {
     let message_on_start_resting =
         env::var("MESSAGE_ON_START_RESTING").unwrap_or("Resting time! ~%time%".to_string());
 
-    // 現在時刻と丸めるための秒数を取得
-    let now_second = chrono::Local::now().timestamp() % 60;
-    let add_second = if now_second < 30 {
-        -now_second
-    } else {
-        60 - now_second
-    };
-
-    // 初期通知時刻等の設定
-    let mut change_state_time =
-        chrono::Local::now() + chrono::Duration::seconds(add_second + working_minutes as i64 * 60);
-    let mut is_working = true;
+    // 初期状態の設定
+    let mut is_working = false;
 
     // ctrl+cで終了するためのハンドラ
     let token_for_signal = token.clone();
@@ -67,13 +57,35 @@ async fn main() {
                 Err(e) => error!("{}", e),
             }
         }
-        remove_file(MESSAGE_ID_LOG).await.expect("Failed to remove message-id.log");
+        remove_file(MESSAGE_ID_LOG)
+            .await
+            .expect("Failed to remove message-id.log");
         info!("Exiting...");
         exit(0);
     });
 
     // ループ開始
     loop {
+        // 状態遷移
+        is_working = !is_working;
+
+        // 現在時刻と丸めるための秒数を取得
+        let now_second = chrono::Local::now().timestamp() % 60;
+        let add_second = if now_second < 30 {
+            -now_second
+        } else {
+            60 - now_second
+        };
+        let now = chrono::Local::now() + chrono::Duration::seconds(add_second);
+
+        // 次に状態遷移する時刻を計算
+        let change_state_time = if is_working {
+            now + chrono::Duration::minutes(working_minutes as i64)
+        } else {
+            now + chrono::Duration::minutes(resting_minutes as i64)
+        }
+        .round_subsecs(0);
+
         // メッセージの作成
         let message = "[toall]\n".to_string()
             + &{
@@ -84,6 +96,7 @@ async fn main() {
                 }
             }
             .replace("%time%", &change_state_time.format("%H:%M").to_string());
+        debug!("Next state: {}", change_state_time);
 
         // spawn用に変数をクローン
         let token = token.clone();
@@ -108,16 +121,8 @@ async fn main() {
             }
         }
 
-        // 次の状態への遷移
-        is_working = !is_working;
+        // 次の状態遷移時刻まで待機
         let now = chrono::Local::now();
-        if is_working {
-            change_state_time = now + chrono::Duration::minutes(resting_minutes as i64);
-        } else {
-            change_state_time = now + chrono::Duration::minutes(working_minutes as i64);
-        }
-        change_state_time = change_state_time.round_subsecs(0);
-        debug!("Next state: {}", change_state_time);
         let sleep_time = change_state_time - now;
         sleep(Duration::from_secs(sleep_time.num_seconds() as u64)).await;
     }
